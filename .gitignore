@@ -1,0 +1,9 @@
+.env
+*.json.bak
+__pycache__/
+.venv/
+profiles/
+data/
+*.db
+*.db-wal
+*.db-shm
