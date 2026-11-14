@@ -111,6 +111,16 @@ class Store:
         self.db.execute("UPDATE chats SET last_synced=? WHERE chat_id=?", (time.time(), chat_id))
         self.db.commit()
 
+    def purge_except(self, keep_ids: set[int]) -> int:
+        """Drop chats (and their messages) not in keep_ids; returns count removed."""
+        rows = self.db.execute("SELECT chat_id FROM chats").fetchall()
+        drop = [r["chat_id"] for r in rows if r["chat_id"] not in keep_ids]
+        for chat_id in drop:
+            self.db.execute("DELETE FROM messages WHERE chat_id=?", (chat_id,))
+            self.db.execute("DELETE FROM chats WHERE chat_id=?", (chat_id,))
+        self.db.commit()
+        return len(drop)
+
     def list_chats(self) -> list[dict[str, Any]]:
         rows = self.db.execute(
             """SELECT c.chat_id, c.title, c.members_count, c.last_synced,

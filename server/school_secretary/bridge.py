@@ -125,6 +125,7 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
     synced = 0
     marker: Optional[int] = None
     chats: list[Any] = []
+    kept_ids: set[int] = set()
     while True:
         page = await client.fetch_chats(marker=marker) or []
         if not page:
@@ -142,6 +143,7 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
         members = getattr(chat, "participants_count", 0) or 0
         if ctype not in GROUP_TYPES or not _is_school_chat(title, cfg):
             continue
+        kept_ids.add(chat.id)
         store.upsert_chat(chat.id, title, ctype, int(members))
 
         # Sender names: chat participants if present, else a members request.
@@ -177,4 +179,7 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
         store.mark_synced(chat.id)
         synced += 1
         log.info("синхронизирован чат «%s» (+%d сообщений)", title, count)
+    removed = store.purge_except(kept_ids)
+    if removed:
+        log.info("удалено чатов вне фильтра: %d", removed)
     return synced
