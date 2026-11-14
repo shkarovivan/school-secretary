@@ -26,25 +26,38 @@ class LLM:
     async def complete(self, system: str, user: str, max_tokens: int = 900,
                        temperature: float = 0.3) -> str:
         url = f"{self.base_url}/chat/completions"
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
         headers = {"Authorization": f"Bearer {self.api_key}",
                    "Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as http:
-            async with http.post(url, json=payload, headers=headers,
-                                 timeout=aiohttp.ClientTimeout(total=self.timeout)) as r:
-                body = await r.text()
-                if r.status != 200:
-                    raise RuntimeError(f"LLM HTTP {r.status}: {body[:300]}")
-                data = json.loads(body)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        # Some gateways/models want max_completion_tokens (new OpenAI convention),
+        # older ones only accept max_tokens — try one, fall back to the other.
+        for token_param in ("max_completion_tokens", "max_tokens"):
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                token_param: max_tokens,
+            }
+            for attempt in (1, 2):  # one retry on transient network errors
                 try:
-                    return data["choices"][0]["message"]["content"].strip()
-                except (KeyError, IndexError) as e:
-                    raise RuntimeError(f"неожиданный ответ LLM: {body[:300]}") from e
+                    async with aiohttp.ClientSession() as http:
+                        async with http.post(url, json=payload, headers=headers,
+                                             timeout=aiohttp.ClientTimeout(total=self.timeout)) as r:
+                            body = await r.text()
+                            if r.status == 400 and "'max_tokens' is not supported" in body:
+                                break  # retry with the other parameter name
+                            if r.status != 200:
+                                raise RuntimeError(f"LLM HTTP {r.status}: {body[:300]}")
+                            data = json.loads(body)
+                            try:
+                                return data["choices"][0]["message"]["content"].strip()
+                            except (KeyError, IndexError) as e:
+                                raise RuntimeError(f"неожиданный ответ LLM: {body[:300]}") from e
+                except aiohttp.ClientConnectorError as e:
+                    if attempt == 2:
+                        raise RuntimeError(f"LLM недоступен: {e}") from e
+                    await __import__("asyncio").sleep(2)
+        raise RuntimeError("LLM: оба варианта параметра токенов отклонены")
