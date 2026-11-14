@@ -87,11 +87,16 @@ class TelegramBot:
                     if chat.get("type") != "private":
                         continue  # stage 1: private chats only
                     user = msg.get("from", {})
+                    text = (msg.get("text") or "").strip()
+                    if not text and msg.get("voice"):
+                        text = await self._transcribe_voice(msg["voice"])
+                        if text:
+                            await self.send_text(chat["id"], f"🎙 {text}")
                     norm = {
                         "chat_id": chat.get("id"),
                         "user_id": user.get("id"),
                         "user_name": user.get("first_name") or user.get("username") or "?",
-                        "text": msg.get("text") or "",
+                        "text": text,
                     }
                     if norm["chat_id"] is None or norm["user_id"] is None or not norm["text"].strip():
                         continue
@@ -104,3 +109,21 @@ class TelegramBot:
             except Exception:  # noqa: BLE001
                 log.exception("опрос обновлений: ошибка, повтор через 5 с")
                 await asyncio.sleep(5)
+
+    async def _transcribe_voice(self, voice: dict[str, Any]) -> str:
+        """Download a Telegram voice message and run local whisper STT."""
+        try:
+            http = await self._http()
+            async with http.get(self._url("getFile"),
+                                params={"file_id": voice["file_id"]}) as r:
+                body = await r.json()
+            file_path = (body.get("result") or {}).get("file_path")
+            if not file_path:
+                raise RuntimeError(f"getFile не дал file_path: {body}")
+            async with http.get(f"{API_BASE}/file/bot{self.token}/{file_path}") as r:
+                audio = await r.read()
+            from .stt import transcribe_bytes
+            return transcribe_bytes(audio, "voice.ogg") or ""
+        except Exception as e:  # noqa: BLE001
+            log.exception("голосовое не распознано")
+            return f"(не удалось распознать голосовое: {e})"

@@ -1,2 +1,4 @@
 maxapi-python==2.5.0
 python-dotenv>=1.0
+faster-whisper==1.2.1
+av==17.1.0
