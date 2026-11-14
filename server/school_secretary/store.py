@@ -164,6 +164,15 @@ class Store:
     def commit_messages(self) -> None:
         self.db.commit()
 
+    def update_sender_names(self, chat_id: int, names: dict[int, str]) -> None:
+        """Fill real names into already-stored messages of the chat."""
+        for uid, nm in names.items():
+            self.db.execute(
+                "UPDATE messages SET user_name=? WHERE chat_id=? AND user_id=?",
+                (nm, chat_id, uid),
+            )
+        self.db.commit()
+
     def last_messages(self, chat_id: int, limit: int = 15) -> list[dict[str, Any]]:
         rows = self.db.execute(
             """SELECT user_name, text, created_at FROM messages

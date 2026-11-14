@@ -16,7 +16,6 @@ import logging
 import time
 from datetime import datetime
 from typing import Any
-
 from .bridge import build_runtime_client, start_client, sync_chats
 from .config import Config
 from .maxbot import MaxBot
@@ -89,10 +88,18 @@ class Application:
             await asyncio.sleep(600)  # every 10 minutes
 
     # ----------------------------------------------------------- digest --
-    def build_today_digest(self, chat_query: str = "") -> str:
-        """Deterministic digest of today's chat messages (LLM comes at stage 3)."""
-        from datetime import datetime, timedelta
+    SYSTEM_SUMMARIZER = (
+        "Ты — школьный секретарь семьи. Тебе дают переписку школьных чатов за день. "
+        "Составь краткую сводку на русском:\n"
+        "1) по каждому чату — 1–3 пункта о главном (факты, а не пересказ подряд);\n"
+        "2) отдельным блоком «Дедлайны и действия» — всё, что требуют от родителей "
+        "(деньги, формы, документы, даты, мероприятия);\n"
+        "3) «Вопросы без ответа» — если есть.\n"
+        "Пиши только на основе сообщений, ничего не выдумывай, без вводных фраз."
+    )
 
+    async def build_today_digest(self, chat_query: str = "") -> str:
+        """LLM summary of today's chat messages; deterministic fallback."""
         day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         since_ms = int(day_start.timestamp() * 1000)
 
@@ -112,15 +119,45 @@ class Application:
             return ("Сегодня новых сообщений " +
                     (f"в «{chat_title_filter}» " if chat_id else "") + "нет. Попробуйте /sync, если давно не обновляли.")
 
-        # group by chat
+        llm = self.cfg.llm()
+        if llm.configured():
+            transcript = self._build_transcript(msgs)
+            try:
+                summary = await llm.complete(
+                    self.SYSTEM_SUMMARIZER,
+                    f"Дата: {day_start.strftime('%d.%m.%Y')}\n\nПереписка за день:\n\n{transcript}",
+                )
+                return f"🤖 Сводка за {day_start.strftime('%d.%m')}\n\n{summary}"
+            except Exception as e:  # noqa: BLE001 - fall back to deterministic digest
+                log.exception("LLM-сводка не удалась, откат на обычную")
+                return (f"(LLM не ответил: {e}; показываю обычную сводку)\n\n"
+                        + self._deterministic_digest(msgs, day_start, chat_title_filter))
+        return self._deterministic_digest(msgs, day_start, chat_title_filter)
+
+    @staticmethod
+    def _build_transcript(msgs: list[dict[str, Any]], budget: int = 6000) -> str:
+        """Compact transcript for the LLM, roughly capped by characters."""
+        lines: list[str] = []
+        total = 0
+        for m in msgs:
+            t = datetime.fromtimestamp(m["created_at"] / 1000).strftime("%H:%M")
+            text = (m["text"] or "").replace("\n", " ")[:220]
+            line = f"[{t}] {m['chat_title']} | {m['user_name']}: {text}"
+            if total + len(line) > budget:
+                lines.append("…(обрезано по бюджету)")
+                break
+            lines.append(line)
+            total += len(line) + 1
+        return "\n".join(lines)
+
+    @staticmethod
+    def _deterministic_digest(msgs: list[dict[str, Any]], day_start, chat_title_filter: str) -> str:
         by_chat: dict[int, dict[str, Any]] = {}
         for m in msgs:
             g = by_chat.setdefault(m["chat_id"], {"title": m["chat_title"], "items": []})
             g["items"].append(m)
-
         head = (f"📅 {day_start.strftime('%d.%m.%Y')}, сообщений за день: {len(msgs)}"
-                + (f" (чат «{chat_title_filter}»)" if chat_id else ""))
-
+                + (f" (чат «{chat_title_filter}»)" if chat_title_filter else ""))
         SHOW_PER_CHAT = 12
         parts = [head]
         for g in by_chat.values():
@@ -189,7 +226,7 @@ class Application:
             return
 
         if text.startswith("/today"):
-            await self.bot.send_text(chat_id, self.build_today_digest(text[6:].strip()))
+            await self.bot.send_text(chat_id, await self.build_today_digest(text[6:].strip()))
             return
 
         if text.startswith("/chats"):

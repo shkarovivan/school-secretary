@@ -32,6 +32,15 @@ class Config:
     ])
     history_depth: int = field(default_factory=lambda: int(os.getenv("SYNC_HISTORY_DEPTH", "50")))
 
+    # LLM (OpenAI-compatible): GLM/Zhipu, OpenRouter, YandexGPT-compatible, local.
+    llm_base: str = field(default_factory=lambda: os.getenv("LLM_API_BASE", ""))
+    llm_key: str = field(default_factory=lambda: os.getenv("LLM_API_KEY", ""))
+    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", ""))
+
+    def llm(self):
+        from .llm import LLM
+        return LLM(self.llm_base, self.llm_key, self.llm_model)
+
     # Paths
     base_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
     db_path: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent / "data" / "secretary.db")

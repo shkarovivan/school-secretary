@@ -147,22 +147,29 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
         store.upsert_chat(chat.id, title, ctype, int(members))
 
         # Sender names: chat participants if present, else a members request.
+        # PyMax model: Member.contact (User) -> .id and .names[] (Name.name).
         names: dict[int, str] = {}
-        for p in (getattr(chat, "participants", None) or []):
-            uid = getattr(p, "user_id", None) or getattr(p, "id", None)
-            nm = getattr(p, "name", None) or getattr(p, "title", None)
-            if uid and nm:
-                names[int(uid)] = str(nm)
+
+        def _collect_members(members: list[Any]) -> None:
+            for mem in members or []:
+                contact = getattr(mem, "contact", None)
+                uid = getattr(contact, "id", None)
+                nm = None
+                for n in (getattr(contact, "names", None) or []):
+                    nm = getattr(n, "name", None) or getattr(n, "first_name", None)
+                    if nm:
+                        break
+                if uid and nm:
+                    names[int(uid)] = str(nm)
+
+        _collect_members(getattr(chat, "participants", None))
         if not names:
             try:
-                for mem in await client.get_chat_members(chat.id, count=100) or []:
-                    uid = getattr(mem, "user_id", None) or getattr(mem, "id", None)
-                    nm = (getattr(mem, "name", None) or getattr(mem, "first_name", None)
-                          or getattr(mem, "title", None))
-                    if uid and nm:
-                        names[int(uid)] = str(nm)
+                _collect_members(await client.get_chat_members(chat.id, count=100))
             except Exception:  # noqa: BLE001 - names are nice-to-have, not critical
                 log.debug("не удалось получить участников %s", title)
+        if names:
+            store.update_sender_names(chat.id, names)
 
         history = await client.fetch_history(chat.id, backward=cfg.history_depth)
         count = 0
