@@ -7,3 +7,6 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# локальные заметки, не для публикации
+docs/plan.md
