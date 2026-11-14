@@ -279,8 +279,19 @@ class Application:
             await self.bot.send_text(chat_id, f"База: {self.store.stats()}\nПоследняя синхронизация: {ok}{err}")
             return
 
-        # free-form text: hint at commands (LLM routing comes at stage 3)
-        await self.bot.send_text(chat_id, "Пока понимаю только команды.\n\n" + HELP)
+        # free-form text: question to the agent (LLM with tools over the store)
+        llm = self.cfg.llm()
+        if not llm.configured():
+            await self.bot.send_text(chat_id, "Пока понимаю только команды.\n\n" + HELP)
+            return
+        from .agent import Agent
+        await self.bot.send_text(chat_id, "Думаю…")
+        try:
+            answer = await Agent(llm, self.store).answer(text)
+            await self.bot.send_text(chat_id, answer or "Пустой ответ модели.")
+        except Exception as e:  # noqa: BLE001
+            log.exception("агент упал")
+            await self.bot.send_text(chat_id, f"Не получилось: {e}")
 
     # ------------------------------------------------------------- main --
     async def run(self) -> None:

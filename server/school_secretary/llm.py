@@ -23,6 +23,46 @@ class LLM:
     def configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
 
+    async def chat_raw(self, messages: list[dict], tools: list[dict] | None = None,
+                       max_tokens: int = 1200, temperature: float = 0.3) -> dict:
+        """One raw chat round; returns the assistant message dict
+        (may contain content and/or tool_calls)."""
+        url = f"{self.base_url}/chat/completions"
+        payload: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        for token_param in ("max_completion_tokens", "max_tokens"):
+            payload[token_param] = max_tokens
+            break  # chat_raw used with gateways that accept the new name; adjust if needed
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        headers = {"Authorization": f"Bearer {self.api_key}",
+                   "Content-Type": "application/json"}
+        last_error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                async with aiohttp.ClientSession() as http:
+                    async with http.post(url, json=payload, headers=headers,
+                                         timeout=aiohttp.ClientTimeout(total=self.timeout)) as r:
+                        body = await r.text()
+                        if r.status == 400 and "max_tokens" in body and "not supported" in body:
+                            payload.pop("max_completion_tokens", None)
+                            payload["max_tokens"] = max_tokens
+                            continue
+                        if r.status != 200:
+                            raise RuntimeError(f"LLM HTTP {r.status}: {body[:300]}")
+                        data = json.loads(body)
+                        return data["choices"][0]["message"]
+            except aiohttp.ClientConnectorError as e:
+                last_error = e
+                if attempt == 2:
+                    raise RuntimeError(f"LLM недоступен: {e}") from e
+                await asyncio.sleep(2)
+        raise RuntimeError(f"LLM: {last_error}")
+
     async def complete(self, system: str, user: str, max_tokens: int = 900,
                        temperature: float = 0.3) -> str:
         url = f"{self.base_url}/chat/completions"
