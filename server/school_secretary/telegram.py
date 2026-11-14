@@ -47,6 +47,17 @@ class TelegramBot:
             self._name = f"@{me.get('username', '?')}"
             return self._name
 
+    async def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """Register the "/" command menu for all users."""
+        http = await self._http()
+        payload = {"commands": [{"command": c, "description": d} for c, d in commands]}
+        async with http.post(self._url("setMyCommands"), json=payload) as r:
+            body = await r.json()
+            if not body.get("ok"):
+                log.warning("setMyCommands не сработал: %s", body)
+            else:
+                log.info("меню команд зарегистрировано (%d шт.)", len(commands))
+
     async def send_text(self, chat_id: int, text: str) -> None:
         http = await self._http()
         for i in range(0, max(len(text), 1), CHUNK):

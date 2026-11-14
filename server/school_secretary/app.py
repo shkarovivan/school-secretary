@@ -215,6 +215,17 @@ class Application:
     async def run(self) -> None:
         name = await self.bot.check()
         log.info("интерфейс %s готов", name)
+        set_commands = getattr(self.bot, "set_commands", None)
+        if set_commands is not None:
+            await set_commands([
+                ("today", "сводка сообщений за сегодня"),
+                ("chats", "список школьных чатов"),
+                ("chat", "последние сообщения чата: /chat <название>"),
+                ("find", "поиск по истории чатов: /find <текст>"),
+                ("sync", "обновить данные из MAX"),
+                ("status", "состояние системы"),
+                ("help", "все команды"),
+            ])
         await asyncio.gather(
             self.bot.poll_updates(self.handle_message),
             self.sync_loop(),
