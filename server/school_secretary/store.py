@@ -134,6 +134,19 @@ class Store:
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def messages_since(self, since_ms: int, chat_id: Optional[int] = None) -> list[dict[str, Any]]:
+        """Messages newer than since_ms (milliseconds), oldest first, with chat titles."""
+        q = ("""SELECT m.user_name, m.text, m.created_at, c.chat_id, c.title AS chat_title
+                FROM messages m JOIN chats c ON c.chat_id=m.chat_id
+                WHERE m.created_at >= ?""")
+        params: list[Any] = [since_ms]
+        if chat_id is not None:
+            q += " AND m.chat_id=?"
+            params.append(chat_id)
+        q += " ORDER BY m.created_at"
+        rows = self.db.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
     def search_messages(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         rows = self.db.execute(
             """SELECT m.user_name, m.text, m.created_at, c.title AS chat_title

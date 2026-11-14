@@ -27,6 +27,7 @@ log = logging.getLogger("app")
 
 HELP = (
     "Команды школьного секретаря:\n"
+    "/today — сводка сообщений за сегодня\n"
     "/chats — список школьных чатов\n"
     "/chat <номер или название> — последние сообщения\n"
     "/find <текст> — поиск по истории чатов\n"
@@ -85,6 +86,53 @@ class Application:
             await self.do_sync()
             await asyncio.sleep(600)  # every 10 minutes
 
+    # ----------------------------------------------------------- digest --
+    def build_today_digest(self, chat_query: str = "") -> str:
+        """Deterministic digest of today's chat messages (LLM comes at stage 3)."""
+        from datetime import datetime, timedelta
+
+        day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        since_ms = int(day_start.timestamp() * 1000)
+
+        chat_id = None
+        chat_title_filter = ""
+        if chat_query:
+            chat = self.store.find_chat(chat_query)
+            if chat is None:
+                titles = self.store.chat_titles_ambiguous(chat_query)
+                hint = ("несколько совпадений: " + "; ".join(titles)) if titles else "чат не найден, см. /chats"
+                return f"Не понял: {hint}"
+            chat_id = chat["chat_id"]
+            chat_title_filter = chat["title"]
+
+        msgs = self.store.messages_since(since_ms, chat_id)
+        if not msgs:
+            return ("Сегодня новых сообщений " +
+                    (f"в «{chat_title_filter}» " if chat_id else "") + "нет. Попробуйте /sync, если давно не обновляли.")
+
+        # group by chat
+        by_chat: dict[int, dict[str, Any]] = {}
+        for m in msgs:
+            g = by_chat.setdefault(m["chat_id"], {"title": m["chat_title"], "items": []})
+            g["items"].append(m)
+
+        head = (f"📅 {day_start.strftime('%d.%m.%Y')}, сообщений за день: {len(msgs)}"
+                + (f" (чат «{chat_title_filter}»)" if chat_id else ""))
+
+        SHOW_PER_CHAT = 12
+        parts = [head]
+        for g in by_chat.values():
+            items = g["items"]
+            lines = [f"\n🗞 {g['title']} ({len(items)})"]
+            for m in items[-SHOW_PER_CHAT:]:
+                t = datetime.fromtimestamp(m["created_at"] / 1000).strftime("%H:%M")
+                text = (m["text"] or "").replace("\n", " ")[:200]
+                lines.append(f"{t} {m['user_name']}: {text}")
+            if len(items) > SHOW_PER_CHAT:
+                lines.append(f"…и ещё {len(items) - SHOW_PER_CHAT} (см. /chat)")
+            parts.append("\n".join(lines))
+        return "\n".join(parts)
+
     # -------------------------------------------------------------- bot --
     async def handle_message(self, msg: dict[str, Any]) -> None:
         chat_id, user_id, user_name, text = (
@@ -104,6 +152,10 @@ class Application:
             return
         if not self.store.is_owner(user_id):
             await self.bot.send_text(chat_id, "Доступ только у владельца. Скажите ему, чтобы подключил вас.")
+            return
+
+        if text.startswith("/today"):
+            await self.bot.send_text(chat_id, self.build_today_digest(text[6:].strip()))
             return
 
         if text.startswith("/chats"):

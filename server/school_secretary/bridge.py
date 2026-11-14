@@ -144,13 +144,23 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
             continue
         store.upsert_chat(chat.id, title, ctype, int(members))
 
-        # Sender names from chat participants when available.
+        # Sender names: chat participants if present, else a members request.
         names: dict[int, str] = {}
         for p in (getattr(chat, "participants", None) or []):
             uid = getattr(p, "user_id", None) or getattr(p, "id", None)
             nm = getattr(p, "name", None) or getattr(p, "title", None)
             if uid and nm:
                 names[int(uid)] = str(nm)
+        if not names:
+            try:
+                for mem in await client.get_chat_members(chat.id, count=100) or []:
+                    uid = getattr(mem, "user_id", None) or getattr(mem, "id", None)
+                    nm = (getattr(mem, "name", None) or getattr(mem, "first_name", None)
+                          or getattr(mem, "title", None))
+                    if uid and nm:
+                        names[int(uid)] = str(nm)
+            except Exception:  # noqa: BLE001 - names are nice-to-have, not critical
+                log.debug("не удалось получить участников %s", title)
 
         history = await client.fetch_history(chat.id, backward=cfg.history_depth)
         count = 0
