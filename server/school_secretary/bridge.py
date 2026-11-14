@@ -23,7 +23,8 @@ from .store import Store
 
 log = logging.getLogger("bridge")
 
-GROUP_TYPES = {"chat", "group", "channel"}
+# PyMax ChatType values: DIALOG (private), CHAT (group), CHANNEL
+GROUP_TYPES = {"chat", "channel"}
 SESSION_NAME = "session.db"
 
 
@@ -135,29 +136,35 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
         marker = new_marker
 
     for chat in chats:
-        ctype_raw = getattr(chat, "chat_type", None) or getattr(chat, "type", "")
+        ctype_raw = getattr(chat, "type", "")
         ctype = str(getattr(ctype_raw, "value", ctype_raw) or "").lower()
-        title = getattr(chat, "title", None) or getattr(chat, "name", "") or "(без названия)"
-        members = getattr(chat, "participants_count", None) or getattr(chat, "members_count", 0) or 0
-        is_group = ctype in GROUP_TYPES or bool(getattr(chat, "is_group", False))
-        if not is_group or not _is_school_chat(title, cfg):
+        title = getattr(chat, "title", None) or "(без названия)"
+        members = getattr(chat, "participants_count", 0) or 0
+        if ctype not in GROUP_TYPES or not _is_school_chat(title, cfg):
             continue
-        store.upsert_chat(chat.chat_id, title, ctype, int(members))
-        history = await client.fetch_history(chat.chat_id, backward=cfg.history_depth)
+        store.upsert_chat(chat.id, title, ctype, int(members))
+
+        # Sender names from chat participants when available.
+        names: dict[int, str] = {}
+        for p in (getattr(chat, "participants", None) or []):
+            uid = getattr(p, "user_id", None) or getattr(p, "id", None)
+            nm = getattr(p, "name", None) or getattr(p, "title", None)
+            if uid and nm:
+                names[int(uid)] = str(nm)
+
+        history = await client.fetch_history(chat.id, backward=cfg.history_depth)
         count = 0
         for m in history:
-            sender = getattr(m, "sender", None)
-            uid = getattr(sender, "user_id", None) or getattr(m, "sender_id", 0) or 0
-            uname = (getattr(sender, "name", None) or getattr(sender, "username", None)
-                     or getattr(m, "sender_name", "") or "?")
+            uid = int(getattr(m, "sender", None) or 0)
+            uname = names.get(uid) or (f"#{uid}" if uid else "?")
             text = getattr(m, "text", None) or ""
-            mid = getattr(m, "message_id", None) or getattr(m, "id", 0)
-            created = int(getattr(m, "created_at", 0) or 0)
+            mid = getattr(m, "id", None)
+            created = int(getattr(m, "time", 0) or 0)
             if text and mid:
-                store.upsert_message(chat.chat_id, int(mid), int(uid or 0), str(uname), text, created)
+                store.upsert_message(chat.id, int(mid), uid, uname, text, created)
                 count += 1
         store.commit_messages()
-        store.mark_synced(chat.chat_id)
+        store.mark_synced(chat.id)
         synced += 1
         log.info("синхронизирован чат «%s» (+%d сообщений)", title, count)
     return synced
