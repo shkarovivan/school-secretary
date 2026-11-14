@@ -165,7 +165,10 @@ async def sync_chats(client: Any, store: Store, cfg: Config) -> int:
         _collect_members(getattr(chat, "participants", None))
         if not names:
             try:
-                _collect_members(await client.get_chat_members(chat.id, count=100))
+                result = await client.get_chat_members(chat.id, count=100)
+                # PyMax returns (members_page, marker) for group chats.
+                members = result[0] if isinstance(result, tuple) else result
+                _collect_members(members)
             except Exception:  # noqa: BLE001 - names are nice-to-have, not critical
                 log.debug("не удалось получить участников %s", title)
         if names:
