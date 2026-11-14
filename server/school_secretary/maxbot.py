@@ -53,7 +53,7 @@ class MaxBot:
                 log.error("send failed: HTTP %s %s", r.status, await r.text())
 
     async def poll_updates(self, handler: Callable[[dict[str, Any]], asyncio.Future]) -> None:
-        """Long polling loop; calls handler(update) for every update."""
+        """Long polling; emits normalized messages {chat_id, user_id, user_name, text}."""
         http = await self._http()
         log.info("бот «%s»: опрос обновлений запущен", self._name)
         while True:
@@ -66,8 +66,11 @@ class MaxBot:
                     body = await r.json()
                 for update in body.get("updates", []):
                     self._marker = update.get("update_id", self._marker)
+                    norm = self._normalize(update)
+                    if norm is None:
+                        continue
                     try:
-                        await handler(update)
+                        await handler(norm)
                     except Exception:  # noqa: BLE001 - handler bugs must not kill polling
                         log.exception("обработка update упала")
             except asyncio.CancelledError:
@@ -75,3 +78,24 @@ class MaxBot:
             except Exception:  # noqa: BLE001 - network hiccups: back off and retry
                 log.exception("опрос обновлений: ошибка, повтор через 5 с")
                 await asyncio.sleep(5)
+
+    @staticmethod
+    def _normalize(update: dict[str, Any]) -> dict[str, Any] | None:
+        msg = (update.get("message_created") or {}).get("message") or {}
+        if not msg:
+            return None
+        sender = msg.get("sender") or {}
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("chat_id") or msg.get("recipient", {}).get("chat_id")
+        user_id = sender.get("user_id")
+        if chat_id is None or user_id is None:
+            return None
+        text = (msg.get("text") or "").strip()
+        if not text:
+            return None
+        return {
+            "chat_id": int(chat_id),
+            "user_id": int(user_id),
+            "user_name": sender.get("name") or "?",
+            "text": text,
+        }

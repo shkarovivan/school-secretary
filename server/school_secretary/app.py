@@ -21,6 +21,7 @@ from .bridge import build_runtime_client, start_client, sync_chats
 from .config import Config
 from .maxbot import MaxBot
 from .store import Store
+from .telegram import TelegramBot
 
 log = logging.getLogger("app")
 
@@ -43,10 +44,18 @@ def _fmt_time(ts: int) -> str:
 class Application:
     def __init__(self) -> None:
         self.cfg = Config()
-        self.cfg.validate_bot()
         self.cfg.ensure_dirs()
         self.store = Store(self.cfg.db_path)
-        self.bot = MaxBot(self.cfg.bot_token)
+        # Transport: Telegram (interim) or MAX bot — by which token is set.
+        if self.cfg.telegram_token:
+            self.bot = TelegramBot(self.cfg.telegram_token)
+        elif self.cfg.bot_token:
+            self.bot = MaxBot(self.cfg.bot_token)
+        else:
+            raise SystemExit(
+                "Ни один интерфейс не настроен: впишите TELEGRAM_BOT_TOKEN "
+                "(или MAX_BOT_TOKEN) в server/.env"
+            )
         self._client = None
         self._client_task = None
         self._last_sync_ok: float = 0.0
@@ -77,25 +86,10 @@ class Application:
             await asyncio.sleep(600)  # every 10 minutes
 
     # -------------------------------------------------------------- bot --
-    def _extract_message(self, update: dict[str, Any]):
-        """Bot API update -> (chat_id, user_id, user_name, text)."""
-        msg = (update.get("message_created") or {}).get("message") or {}
-        if not msg:
-            return None
-        sender = msg.get("sender") or {}
-        chat = msg.get("chat") or {}
-        chat_id = chat.get("chat_id") or msg.get("recipient", {}).get("chat_id")
-        user_id = sender.get("user_id")
-        if chat_id is None or user_id is None:
-            return None
-        return int(chat_id), int(user_id), sender.get("name") or "?", msg.get("text") or ""
-
-    async def handle_update(self, update: dict[str, Any]) -> None:
-        parsed = self._extract_message(update)
-        if not parsed:
-            return
-        chat_id, user_id, user_name, text = parsed
-        text = text.strip()
+    async def handle_message(self, msg: dict[str, Any]) -> None:
+        chat_id, user_id, user_name, text = (
+            msg["chat_id"], msg["user_id"], msg["user_name"], msg["text"].strip()
+        )
         if not text:
             return
 
@@ -168,9 +162,9 @@ class Application:
     # ------------------------------------------------------------- main --
     async def run(self) -> None:
         name = await self.bot.check()
-        log.info("бот «%s» готов", name)
+        log.info("интерфейс %s готов", name)
         await asyncio.gather(
-            self.bot.poll_updates(self.handle_update),
+            self.bot.poll_updates(self.handle_message),
             self.sync_loop(),
         )
 

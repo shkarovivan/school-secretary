@@ -1,4 +1,7 @@
-# School Secretary Server (этап 1: бот + школьные чаты MAX)
+# School Secretary Server (этап 1: интерфейс-бот + школьные чаты MAX)
+
+Интерфейс выбирается по токену в `.env`: сейчас **Telegram** (временно,
+пока нет MAX-бота), позже MAX-бот — код транспорта взаимозаменяем.
 
 ## Установка
 
@@ -6,8 +9,13 @@
 cd server
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # заполнить MAX_BOT_TOKEN и BRIDGE_PHONE
+cp .env.example .env   # заполнить TELEGRAM_BOT_TOKEN и BRIDGE_PHONE
 ```
+
+## Интерфейс Telegram (текущий)
+
+1. В Telegram: @BotFather → `/newbot` → имя и username → скопировать токен.
+2. Токен в `server/.env`: `TELEGRAM_BOT_TOKEN=...`.
 
 ## Разовый вход userbot-профиля (чтение школьных чатов)
 

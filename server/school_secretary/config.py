@@ -25,6 +25,7 @@ _load_dotenv()
 @dataclass
 class Config:
     bot_token: str = field(default_factory=lambda: os.getenv("MAX_BOT_TOKEN", ""))
+    telegram_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     bridge_phone: str = field(default_factory=lambda: os.getenv("BRIDGE_PHONE", ""))
     school_filter: list[str] = field(default_factory=lambda: [
         s.strip().lower() for s in os.getenv("SCHOOL_CHAT_FILTER", "").split(",") if s.strip()
@@ -37,8 +38,8 @@ class Config:
     profiles_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent / "profiles")
 
     def validate_bot(self) -> None:
-        if not self.bot_token:
-            raise SystemExit("MAX_BOT_TOKEN не задан: создайте бота на dev.max.ru и впишите токен в server/.env")
+        if not self.bot_token and not self.telegram_token:
+            raise SystemExit("Ни MAX_BOT_TOKEN, ни TELEGRAM_BOT_TOKEN не заданы в server/.env")
 
     def ensure_dirs(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
