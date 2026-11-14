@@ -66,6 +66,35 @@ class Store:
         ).fetchone()
         return bool(row and row["role"] == "owner")
 
+    def is_allowed(self, max_user_id: int) -> bool:
+        row = self.db.execute(
+            "SELECT role FROM bot_users WHERE max_user_id=?", (max_user_id,)
+        ).fetchone()
+        return bool(row and row["role"] in ("owner", "member"))
+
+    def owner_id(self) -> Optional[int]:
+        row = self.db.execute("SELECT max_user_id FROM bot_users WHERE role='owner'").fetchone()
+        return row["max_user_id"] if row else None
+
+    def set_role(self, max_user_id: int, role: str) -> bool:
+        cur = self.db.execute(
+            "UPDATE bot_users SET role=? WHERE max_user_id=?", (role, max_user_id)
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def user_name(self, max_user_id: int) -> str:
+        row = self.db.execute(
+            "SELECT name FROM bot_users WHERE max_user_id=?", (max_user_id,)
+        ).fetchone()
+        return row["name"] if row else "?"
+
+    def list_users(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT max_user_id, name, role FROM bot_users ORDER BY role, name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------ chats --
     def upsert_chat(self, chat_id: int, title: str, chat_type: str, members_count: int) -> None:
         self.db.execute(

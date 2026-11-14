@@ -31,8 +31,10 @@ HELP = (
     "/chats — список школьных чатов\n"
     "/chat <номер или название> — последние сообщения\n"
     "/find <текст> — поиск по истории чатов\n"
-    "/sync — обновить данные из MAX (владелец)\n"
-    "/status — состояние системы"
+    "/sync — обновить данные из MAX\n"
+    "/status — состояние системы\n"
+    "/users — пользователи (владелец)\n"
+    "/allow <id> — открыть доступ (владелец)"
 )
 
 
@@ -143,15 +145,47 @@ class Application:
 
         if text.startswith("/start"):
             role = self.store.bind_owner(user_id, user_name)
-            hi = ("Вы — владелец секретаря. " if role == "owner"
-                  else "Ждите подтверждения доступа от владельца. ")
-            await self.bot.send_text(chat_id, f"Здравствуйте, {user_name}! {hi}\n\n{HELP}")
+            if role == "owner":
+                await self.bot.send_text(chat_id, f"Здравствуйте, {user_name}! Вы — владелец секретаря.\n\n{HELP}")
+            elif role == "member":
+                await self.bot.send_text(chat_id, f"Здравствуйте, {user_name}! Доступ открыт.\n\n{HELP}")
+            else:
+                # Guest: ask the owner to approve, with a ready-to-copy command.
+                owner = self.store.owner_id()
+                await self.bot.send_text(chat_id, "Вы не в списке. Запрос на доступ отправлен владельцу.")
+                if owner:
+                    await self.bot.send_text(
+                        owner,
+                        f"Запрос доступа: {user_name} (id={user_id}).\nОткрыть: /allow {user_id}",
+                    )
             return
         if text.startswith("/help"):
             await self.bot.send_text(chat_id, HELP)
             return
-        if not self.store.is_owner(user_id):
-            await self.bot.send_text(chat_id, "Доступ только у владельца. Скажите ему, чтобы подключил вас.")
+        if text.startswith("/allow"):
+            if not self.store.is_owner(user_id):
+                await self.bot.send_text(chat_id, "Доступ раздаёт только владелец.")
+                return
+            arg = text[6:].strip().lstrip("@")
+            if not arg.isdigit():
+                await self.bot.send_text(chat_id, "Формат: /allow <id> (id приходит в уведомлении о запросе)")
+                return
+            target = int(arg)
+            if not self.store.set_role(target, "member"):
+                await self.bot.send_text(chat_id, f"Пользователь {target} ещё не писал боту — не могу открыть.")
+                return
+            await self.bot.send_text(chat_id, f"Готово: {self.store.user_name(target)} (id={target}) получил доступ.")
+            await self.bot.send_text(target, f"Вам открыт доступ к школьному секретарю!\n\n{HELP}")
+            return
+        if text.startswith("/users"):
+            if not self.store.is_owner(user_id):
+                await self.bot.send_text(chat_id, "Только для владельца.")
+                return
+            lines = [f"{u['name']} (id={u['max_user_id']}) — {u['role']}" for u in self.store.list_users()]
+            await self.bot.send_text(chat_id, "Пользователи:\n" + "\n".join(lines))
+            return
+        if not self.store.is_allowed(user_id):
+            await self.bot.send_text(chat_id, "Доступ только у владельца и одобренных членов семьи.")
             return
 
         if text.startswith("/today"):
@@ -217,15 +251,17 @@ class Application:
         log.info("интерфейс %s готов", name)
         set_commands = getattr(self.bot, "set_commands", None)
         if set_commands is not None:
-            await set_commands([
-                ("today", "сводка сообщений за сегодня"),
-                ("chats", "список школьных чатов"),
-                ("chat", "последние сообщения чата: /chat <название>"),
-                ("find", "поиск по истории чатов: /find <текст>"),
-                ("sync", "обновить данные из MAX"),
-                ("status", "состояние системы"),
-                ("help", "все команды"),
-            ])
+        await set_commands([
+            ("today", "сводка сообщений за сегодня"),
+            ("chats", "список школьных чатов"),
+            ("chat", "последние сообщения чата: /chat <название>"),
+            ("find", "поиск по истории чатов: /find <текст>"),
+            ("sync", "обновить данные из MAX"),
+            ("status", "состояние системы"),
+            ("users", "пользователи (владелец)"),
+            ("allow", "открыть доступ: /allow <id> (владелец)"),
+            ("help", "все команды"),
+        ])
         await asyncio.gather(
             self.bot.poll_updates(self.handle_message),
             self.sync_loop(),
